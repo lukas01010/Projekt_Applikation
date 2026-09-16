@@ -36,3 +36,5 @@ def mouse_pressed():
   global current_step
   # Mit jedem Klick einen Schritt weitergehen
   current_step += 1
+
+py5.run_sketch()
