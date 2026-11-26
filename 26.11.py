@@ -814,11 +814,11 @@ def draw_menu():
   py5.text_align(py5.CENTER, py5.CENTER)
   py5.fill(*TEXT_DARK)
   py5.text_size(34 * s)
-  py5.text("Mathe-Werkzeug", w / 2.0, h * 0.155)
+  py5.text("Mathe-Tool-Rechner", w / 2.0, h * 0.155)
 
   py5.fill(*TEXT_MUTED)
   py5.text_size(17.5 * s)
-  py5.text("Wähle ein Thema per Klick oder Taste (1, 2, 3):", w / 2.0, h * 0.215)
+  py5.text("Wähle ein Tool per Klick oder Taste (1, 2, 3):", w / 2.0, h * 0.215)
 
   card_w = min(640 * s, w - 80)
   card_h = 102 * s
