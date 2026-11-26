@@ -27,20 +27,33 @@ THEME_KGV_LIGHT = (242, 238, 247)
 
 BTN_NEUTRAL = (228, 232, 238)    # Neutrales Hellgrau für sekundäre Buttons
 
+# Feste Masse für den scrollbaren Bereich des Faktorbaums
+TREE_VIEW_X = 50                 # Linker Rand des Baum-Fensters
+TREE_VIEW_Y = 290                # Oberer Rand des Baum-Fensters
+TREE_VIEW_W = 1100               # Breite des Baum-Fensters
+TREE_VIEW_H = 420                # Höhe des Baum-Fensters (endet bei y = 710)
+TREE_START_Y = 335               # Start-Y-Position der obersten Zahl (Wurzelknoten)
+
 # Variablen für die Unterseite "Primfaktorzerlegung"
-input_text = ""       # Aktuell eingetippte Ziffern als Text (String)
-number = None         # Die bestätigte Zahl als Ganzzahl (Integer), am Anfang noch leer (None)
-current_tree = None   # Speichert den obersten Knoten (Wurzel) des berechneten Faktorbaums
-factor_steps = []     # Liste aller verzweigten Knoten, um die Anzahl Schritte zu kennen
-current_step = 0      # Zählt, wie viele Zerlegungsebenen im Baum aktuell sichtbar sind
+input_text = ""            # Aktuell eingetippte Ziffern als Text (String)
+number = None              # Die bestätigte Zahl als Ganzzahl (Integer)
+current_tree = None        # Oberster Knoten (Wurzel) des berechneten Faktorbaums
+factor_steps = []          # Liste aller verzweigten Knoten, um die Schrittanzahl zu kennen
+current_step = 0           # Zählt, wie viele Zerlegungsebenen aktuell sichtbar sind
+tree_scroll_y = 0          # Aktuelle vertikale Scroll-Verschiebung in Pixeln (0 oder negativ)
+max_scroll_y = 0           # Maximaler Scrollweg nach unten (0 = kein Scrollen nötig)
+is_pressing_tree = False   # True, während die Maustaste im Baumbereich gedrückt gehalten wird
+has_dragged_tree = False   # True, sobald die Maus beim Gedrückthalten bewegt wurde
+press_y = 0                # Y-Position der Maus beim Klicken (für Drag-Scrolling)
+drag_start_scroll = 0      # Scroll-Stand zu Beginn des Ziehens
 message = "Gib eine Zahl ein und drücke Enter."
 
 # Variablen für die Unterseiten "ggT" und "kgV"
-input_a = ""          # Eingabetext für Zahl 1
-input_b = ""          # Eingabetext für Zahl 2
-active_field = 0      # Bestimmt, in welches Feld getippt wird: 0 = Zahl 1, 1 = Zahl 2
-num_a = None          # Bestätigte Zahl 1 als Ganzzahl
-num_b = None          # Bestätigte Zahl 2 als Ganzzahl
+input_a = ""               # Eingabetext für Zahl 1
+input_b = ""               # Eingabetext für Zahl 2
+active_field = 0           # Bestimmt, in welches Feld getippt wird: 0 = Zahl 1, 1 = Zahl 2
+num_a = None               # Bestätigte Zahl 1 als Ganzzahl
+num_b = None               # Bestätigte Zahl 2 als Ganzzahl
 pair_message = "Gib zwei Zahlen ein (Tab oder Klick zum Wechseln) und drücke Enter."
 
 
@@ -53,9 +66,9 @@ class FactorNode:
 
   def __init__(self, value, x=0, y=0):
     # 'self' verweist auf den jeweiligen einzelnen Kreis im Baum
-    self.value = value  # Der Zahlenwert in diesem Kreis (z.B. 84, 2 oder 42)
+    self.value = value  # Der Zahlenwert in diesem Kreis (z.B. 128, 2 oder 64)
     self.x = x          # X-Position (waagrecht) auf dem Bildschirm
-    self.y = y          # Y-Position (senkrecht) auf dem Bildschirm
+    self.y = y          # Y-Position (senkrecht) ohne Scroll-Verschiebung
     self.left = None    # Verweis auf den linken Kindknoten (kleinster Primfaktor)
     self.right = None   # Verweis auf den rechten Kindknoten (Rest nach Division)
 
@@ -85,7 +98,7 @@ def is_prime(value):
     return False
 
   divisor = 2
-  # Wir testen mögliche Teiler nur bis zur Wurzel von 'value' (divisor * divisor <= value),
+  # Es reicht, Teiler bis zur Quadratwurzel von 'value' zu testen (divisor * divisor <= value),
   # weil ein grösserer Teiler immer einen kleineren Partner unterhalb der Wurzel hat
   while divisor * divisor <= value:
     # Der Modulo-Operator (%) berechnet den Rest einer Division
@@ -158,6 +171,45 @@ def format_factors(factors):
   return " × ".join(str(f) for f in factors)
 
 
+def count_leaves(node):
+  """Zählt rekursiv, wie viele Endpunkte (Blätter) unterhalb eines Knotens hängen."""
+  if node is None:
+    return 0
+  # Ein Knoten ohne Kinder ist selbst genau 1 Endpunkt
+  if node.left is None and node.right is None:
+    return 1
+  return count_leaves(node.left) + count_leaves(node.right)
+
+
+def get_visible_max_y(node, reveal_step):
+  """Ermittelt die tiefste Y-Position aller aktuell aufgedeckten Kreise im Baum."""
+  if node is None:
+    return TREE_START_Y
+
+  max_y = node.y
+  # Wenn weitere Ebenen darunter bereits aufgedeckt sind, deren tiefsten Punkt suchen
+  if reveal_step > 0:
+    if node.left is not None:
+      max_y = max(max_y, get_visible_max_y(node.left, reveal_step - 1))
+    if node.right is not None:
+      max_y = max(max_y, get_visible_max_y(node.right, reveal_step - 1))
+
+  return max_y
+
+
+def get_tree_max_scroll():
+  """Berechnet, wie viele Pixel man nach unten scrollen darf, damit alle sichtbaren Kreise passen."""
+  if current_tree is None:
+    return 0
+
+  # Tiefster Punkt inklusive Kreisradius (29 px) und etwas Abstand zum unteren Rand (25 px)
+  content_bottom = get_visible_max_y(current_tree, current_step) + 54
+  viewport_bottom = TREE_VIEW_Y + TREE_VIEW_H
+
+  # Wenn der Baum höher als das Sichtfenster ist, ergibt die Differenz den maximalen Scrollweg
+  return max(0, content_bottom - viewport_bottom)
+
+
 # ==============================================================================
 # 5. ZUSTAND ZURÜCKSETZEN & BERECHNUNGEN STARTEN
 # ==============================================================================
@@ -166,16 +218,21 @@ def reset_mode(new_mode):
   """Wechselt die Unterseite und setzt alle vorherigen Eingaben sauber zurück."""
   # 'global' erlaubt es dieser Funktion, die Variablen oben ausserhalb zu überschreiben
   global mode, input_text, number, current_tree, factor_steps, current_step, message
+  global tree_scroll_y, max_scroll_y, is_pressing_tree, has_dragged_tree
   global input_a, input_b, active_field, num_a, num_b, pair_message
 
   mode = new_mode  # Neuen Modus setzen ("menu", "prim", "ggt" oder "kgv")
 
-  # Werte der Primfaktorzerlegung leeren
+  # Werte und Scrollzustand der Primfaktorzerlegung leeren
   input_text = ""
   number = None
   current_tree = None
   factor_steps = []
   current_step = 0
+  tree_scroll_y = 0
+  max_scroll_y = 0
+  is_pressing_tree = False
+  has_dragged_tree = False
   message = "Gib eine Zahl ein und drücke Enter."
 
   # Werte von ggT / kgV leeren
@@ -190,6 +247,7 @@ def reset_mode(new_mode):
 def calculate_number():
   """Liest die eingegebene Zahl bei der Primfaktorzerlegung ein und baut den Baum."""
   global number, current_tree, factor_steps, current_step, message
+  global tree_scroll_y, max_scroll_y
 
   # Prüfen, ob überhaupt etwas eingetippt wurde
   if not input_text:
@@ -204,6 +262,8 @@ def calculate_number():
     number = None
     current_tree = None
     factor_steps = []
+    tree_scroll_y = 0
+    max_scroll_y = 0
     message = "Bitte eine ganze Zahl grösser als 1 eingeben."
     return
 
@@ -211,15 +271,29 @@ def calculate_number():
   number = candidate
   factor_steps = []
   current_step = 0
-  current_tree = build_factor_tree(number)           # Baumstruktur im Speicher aufbauen
-  position_tree(current_tree, 80, 1120, 325)         # Bildschirmkoordinaten für jeden Kreis berechnen
-  collect_steps(current_tree)                        # Verzweigungspunkte zählen
+  tree_scroll_y = 0
+  current_tree = build_factor_tree(number)                    # Baumstruktur im Speicher aufbauen
+  position_tree(current_tree, 80, 1100, TREE_START_Y)         # Bildschirmkoordinaten berechnen
+  collect_steps(current_tree)                                 # Verzweigungspunkte zählen
+  max_scroll_y = get_tree_max_scroll()                        # Anfangs-Scrollbereich bestimmen
 
   # Passende Rückmeldung für die SuS setzen
   if is_prime(number):
     message = f"{number} ist bereits eine Primzahl."
   else:
-    message = "Klicke auf das Feld oder drücke die Leertaste für den nächsten Schritt."
+    message = "Klicke ins Feld oder drücke Leertaste für den nächsten Schritt (Scrollen: Mausrad / ↑↓)."
+
+
+def advance_prim_step():
+  """Deckt die nächste Ebene im Faktorbaum auf und scrollt bei tiefen Bäumen automatisch mit."""
+  global current_step, tree_scroll_y, max_scroll_y
+
+  if number is not None and current_step < len(factor_steps):
+    current_step += 1
+    # Prüfen, ob der Baum durch diesen neuen Schritt unten aus dem Sichtfenster ragt
+    max_scroll_y = get_tree_max_scroll()
+    # Automatisch nach unten scrollen, damit der neu aufgedeckte Schritt sofort sichtbar ist
+    tree_scroll_y = -max_scroll_y
 
 
 def calculate_pair():
@@ -419,6 +493,31 @@ def draw_input_box(x, y, w, h, prefix, value, placeholder, is_active, accent_col
     py5.text(placeholder, x + 16 + offset, y + h / 2)
 
 
+def draw_scrollbar():
+  """Zeichnet rechts im Baum-Fenster einen Scrollbalken, sobald der Baum höher als das Feld ist."""
+  if max_scroll_y <= 0:
+    return
+
+  # Äussere Scroll-Schiene (Track)
+  track_x = TREE_VIEW_X + TREE_VIEW_W - 18
+  track_y = TREE_VIEW_Y + 12
+  track_w = 8
+  track_h = TREE_VIEW_H - 24
+
+  py5.no_stroke()
+  py5.fill(232, 236, 242)
+  py5.rect(track_x, track_y, track_w, track_h, 4)
+
+  # Grösse und Position des beweglichen Balkens (Thumb) anteilig berechnen
+  total_h = TREE_VIEW_H + max_scroll_y
+  thumb_h = max(36, track_h * (TREE_VIEW_H / total_h))
+  scroll_ratio = -tree_scroll_y / max_scroll_y  # Wert zwischen 0.0 (ganz oben) und 1.0 (ganz unten)
+  thumb_y = track_y + (track_h - thumb_h) * scroll_ratio
+
+  py5.fill(*THEME_PRIM)
+  py5.rect(track_x, thumb_y, track_w, thumb_h, 4)
+
+
 # ==============================================================================
 # 8. ZEICHENFUNKTIONEN FÜR DIE EINZELNEN SEITEN
 # ==============================================================================
@@ -464,25 +563,31 @@ def position_tree(node, left, right, y):
   node.x = (left + right) / 2
   node.y = y
 
-  # Teilt den horizontalen Platz für die nächste Ebene (95 Pixel tiefer) in linke und rechte Hälfte
-  if node.left is not None:
-    position_tree(node.left, left, node.x, y + 95)
-  if node.right is not None:
-    position_tree(node.right, node.x, right, y + 95)
+  # Teilt den horizontalen Platz proportional zur Anzahl Endpunkte (Blätter) auf,
+  # damit sich bei tiefen Bäumen wie 128 keine Kreise seitlich überlappen
+  if node.left is not None and node.right is not None:
+    left_leaves = count_leaves(node.left)
+    total_leaves = count_leaves(node)
+    split = left + (right - left) * (left_leaves / total_leaves)
+    position_tree(node.left, left, split, y + 95)
+    position_tree(node.right, split, right, y + 95)
 
 
-def draw_factor_node(node, reveal_step):
+def draw_factor_node(node, reveal_step, offset_y):
   """Zeichnet den Faktorbaum rekursiv bis zur aktuell freigeschalteten Tiefe."""
   if node is None:
     return
+
+  # Aktuelle Bildschirm-Y-Position inklusive Scroll-Verschiebung berechnen
+  draw_y = node.y + offset_y
 
   # Verbindungslinien zu den Kindknoten nur zeichnen, wenn 'reveal_step > 0' ist
   # (damit beim allerersten Schritt noch keine Linien ins Leere zeigen)
   if node.left is not None and node.right is not None and reveal_step > 0:
     py5.stroke(180, 188, 200)
     py5.stroke_weight(2.2)
-    py5.line(node.x, node.y, node.left.x, node.left.y)
-    py5.line(node.x, node.y, node.right.x, node.right.y)
+    py5.line(node.x, draw_y, node.left.x, node.left.y + offset_y)
+    py5.line(node.x, draw_y, node.right.x, node.right.y + offset_y)
 
   # Farbe des Kreises je nach Zustand wählen:
   if is_prime(node.value):
@@ -498,19 +603,19 @@ def draw_factor_node(node, reveal_step):
   # Kreis mit weissem Rand zeichnen, damit er sich sauber von den Linien abhebt
   py5.stroke(*CARD_BG)
   py5.stroke_weight(3)
-  py5.ellipse(node.x, node.y, 58, 58)
+  py5.ellipse(node.x, draw_y, 58, 58)
 
   # Zahlenwert mittig in den Kreis schreiben
   py5.fill(*text_col)
   py5.no_stroke()
   py5.text_size(18)
   py5.text_align(py5.CENTER, py5.CENTER)
-  py5.text(str(node.value), node.x, node.y)
+  py5.text(str(node.value), node.x, draw_y)
 
   # Mit 'reveal_step - 1' wird pro Ebene nach unten genau ein Schritt heruntergezählt
   if reveal_step > 0:
-    draw_factor_node(node.left, reveal_step - 1)
-    draw_factor_node(node.right, reveal_step - 1)
+    draw_factor_node(node.left, reveal_step - 1, offset_y)
+    draw_factor_node(node.right, reveal_step - 1, offset_y)
 
 
 def draw_prim():
@@ -525,7 +630,7 @@ def draw_prim():
   )
 
   # 2. Eingabefeld und Berechnen-Button
-  draw_input_box(50, 200, 380, 48, "", input_text, "Zahl eingeben (z.B. 84)...", True, THEME_PRIM)
+  draw_input_box(50, 200, 380, 48, "", input_text, "Zahl eingeben (z.B. 128)...", True, THEME_PRIM)
   draw_button(445, 200, 145, 48, "Berechnen", THEME_PRIM, (255, 255, 255), 17)
 
   # 3. Button "Nächster Schritt" nur einblenden, solange der Baum noch nicht fertig aufgedeckt ist
@@ -538,28 +643,36 @@ def draw_prim():
   py5.text_size(16)
   py5.text(message, 50, 268)
 
-  # 5. Faktorbaum und untere Ergebniskarte zeichnen, sobald eine gültige Zahl vorliegt
-  if number is not None:
-    if current_tree is not None:
-      draw_factor_node(current_tree, current_step)
+  # 5. Sichtbaren Rahmen (Viewport) für den scrollbaren Faktorbaum zeichnen
+  py5.fill(250, 251, 253)
+  py5.stroke(*BORDER_SOFT)
+  py5.stroke_weight(1.5)
+  py5.rect(TREE_VIEW_X, TREE_VIEW_Y, TREE_VIEW_W, TREE_VIEW_H, 12)
 
-    if number >= 2:
-      # Weisse Ergebniskarte am unteren Bildschirmrand
-      py5.fill(*CARD_BG)
-      py5.stroke(*BORDER_SOFT)
-      py5.stroke_weight(1.5)
-      py5.rect(50, 725, 1100, 50, 12)
+  # 6. Faktorbaum innerhalb dieses Bereichs abschneiden (Clipping), damit nichts übersteht
+  if number is not None and current_tree is not None:
+    py5.clip(TREE_VIEW_X + 2, TREE_VIEW_Y + 2, TREE_VIEW_W - 4, TREE_VIEW_H - 4)
+    draw_factor_node(current_tree, current_step, tree_scroll_y)
+    py5.no_clip()  # Zeichenbereich wieder für das ganze Fenster freigeben
+    draw_scrollbar()
 
-      py5.no_stroke()
-      py5.text_align(py5.LEFT, py5.CENTER)
-      py5.fill(*TEXT_MUTED)
-      py5.text_size(17)
-      py5.text("Primfaktorzerlegung:", 72, 750)
+  # 7. Untere Ergebniskarte mit dem Gesamtprodukt zeichnen
+  if number is not None and number >= 2:
+    py5.fill(*CARD_BG)
+    py5.stroke(*BORDER_SOFT)
+    py5.stroke_weight(1.5)
+    py5.rect(50, 725, 1100, 50, 12)
 
-      # Vollständige Zerlegung als Produkt in Grün daneben schreiben
-      py5.fill(*THEME_GGT)
-      py5.text_size(20)
-      py5.text(f"{number} = " + format_factors(get_prime_factors(number)), 285, 750)
+    py5.no_stroke()
+    py5.text_align(py5.LEFT, py5.CENTER)
+    py5.fill(*TEXT_MUTED)
+    py5.text_size(17)
+    py5.text("Primfaktorzerlegung:", 72, 750)
+
+    # Vollständige Zerlegung als Produkt in Grün daneben schreiben
+    py5.fill(*THEME_GGT)
+    py5.text_size(20)
+    py5.text(f"{number} = " + format_factors(get_prime_factors(number)), 285, 750)
 
 
 def draw_ggt_kgv():
@@ -643,7 +756,7 @@ def draw_ggt_kgv():
 
 def mouse_pressed():
   """Wird automatisch aufgerufen, sobald die linke Maustaste gedrückt wird."""
-  global current_step, active_field
+  global active_field, is_pressing_tree, has_dragged_tree, press_y, drag_start_scroll
 
   # 1. Klicks im Hauptmenü prüfen (anhand der Koordinaten der drei Karten)
   if mode == "menu":
@@ -667,9 +780,17 @@ def mouse_pressed():
     if 445 <= py5.mouse_x <= 590 and 200 <= py5.mouse_y <= 248:
       calculate_number()
       return
-    # Jeder weitere Klick ins Fenster deckt die nächste Ebene des Baums auf
-    if number is not None and current_step < len(factor_steps):
-      current_step += 1
+    # Klick auf den Button "Nächster Schritt"
+    if 605 <= py5.mouse_x <= 790 and 200 <= py5.mouse_y <= 248:
+      advance_prim_step()
+      return
+    # Klick innerhalb des Baum-Fensters starten (für Ziehen oder Schritt aufdecken)
+    if (TREE_VIEW_X <= py5.mouse_x <= TREE_VIEW_X + TREE_VIEW_W and
+        TREE_VIEW_Y <= py5.mouse_y <= TREE_VIEW_Y + TREE_VIEW_H):
+      is_pressing_tree = True
+      has_dragged_tree = False
+      press_y = py5.mouse_y
+      drag_start_scroll = tree_scroll_y
 
   # 4. Klicks auf den Unterseiten "ggT" und "kgV"
   elif mode in ("ggt", "kgv"):
@@ -681,15 +802,60 @@ def mouse_pressed():
       calculate_pair()  # Button "Berechnen" auslösen
 
 
+def mouse_dragged():
+  """Wird aufgerufen, wenn die Maus bei gedrückter Taste bewegt wird (Scrollen per Ziehen)."""
+  global tree_scroll_y, has_dragged_tree
+
+  if mode == "prim" and is_pressing_tree and max_scroll_y > 0:
+    delta_y = py5.mouse_y - press_y
+    # Erst ab mehr als 4 Pixel Bewegung als Ziehen werten, damit normale Klicks nicht blockiert werden
+    if abs(delta_y) > 4:
+      has_dragged_tree = True
+    # Neue Scrollposition berechnen und zwischen 0 (oben) und -max_scroll_y (unten) begrenzen
+    tree_scroll_y = max(-max_scroll_y, min(0, drag_start_scroll + delta_y))
+
+
+def mouse_released():
+  """Wird aufgerufen, sobald die Maustaste wieder losgelassen wird."""
+  global is_pressing_tree, has_dragged_tree
+
+  if mode == "prim" and is_pressing_tree:
+    # Wenn die Maus nur kurz geklickt und nicht gezogen wurde, nächsten Zerlegungsschritt zeigen
+    if not has_dragged_tree:
+      advance_prim_step()
+    is_pressing_tree = False
+    has_dragged_tree = False
+
+
+def mouse_wheel(event):
+  """Wird aufgerufen, sobald das Mausrad gedreht wird."""
+  global tree_scroll_y
+
+  if mode == "prim" and max_scroll_y > 0:
+    # event.get_count() liefert die Drehrichtung (+1 beim Runterscrollen, -1 beim Hochscrollen)
+    tree_scroll_y -= event.get_count() * 45
+    # Scrollposition sauber innerhalb der erlaubten Grenzen halten
+    tree_scroll_y = max(-max_scroll_y, min(0, tree_scroll_y))
+
+
 def key_pressed():
   """Wird automatisch aufgerufen, sobald eine Taste auf der Tastatur gedrückt wird."""
-  global input_text, input_a, input_b, active_field, current_step
+  global input_text, input_a, input_b, active_field, tree_scroll_y
 
-  # Sondertasten ohne Textzeichen (wie Shift, Ctrl, Alt, Pfeiltasten) sofort überspringen
+  # 1. Pfeiltasten Hoch/Runter zum Scrollen bei der Primfaktorzerlegung
+  if mode == "prim" and max_scroll_y > 0:
+    if py5.key_code == py5.UP:
+      tree_scroll_y = min(0, tree_scroll_y + 45)
+      return
+    elif py5.key_code == py5.DOWN:
+      tree_scroll_y = max(-max_scroll_y, tree_scroll_y - 45)
+      return
+
+  # Sondertasten ohne Textzeichen (wie Shift, Ctrl, Alt) ab hier überspringen
   if not isinstance(py5.key, str):
     return
 
-  # 1. Schnellauswahl per Zifferntaste 1, 2 oder 3 im Hauptmenü
+  # 2. Schnellauswahl per Zifferntaste 1, 2 oder 3 im Hauptmenü
   if mode == "menu":
     if py5.key == "1":
       reset_mode("prim")
@@ -699,13 +865,13 @@ def key_pressed():
       reset_mode("kgv")
     return
 
-  # 2. Tabulator-Taste ("\t") wechselt bei ggT/kgV zwischen Feld 0 und Feld 1
+  # 3. Tabulator-Taste ("\t") wechselt bei ggT/kgV zwischen Feld 0 und Feld 1
   if py5.key == "\t":
     if mode in ("ggt", "kgv"):
       active_field = 1 - active_field  # Trick: 1 - 0 ergibt 1, und 1 - 1 ergibt 0
     return
 
-  # 3. Rücktaste / Löschen (ASCII-Code 8 auf Windows/Linux, 127 auf macOS)
+  # 4. Rücktaste / Löschen (ASCII-Code 8 auf Windows/Linux, 127 auf macOS)
   if py5.key == chr(8) or py5.key == chr(127):
     if mode == "prim":
       input_text = input_text[:-1]  # Schneidet das letzte Zeichen ab
@@ -716,7 +882,7 @@ def key_pressed():
         input_b = input_b[:-1]
     return
 
-  # 4. Enter-Taste ("\r" oder "\n") startet die Berechnung auf der aktuellen Seite
+  # 5. Enter-Taste ("\r" oder "\n") startet die Berechnung auf der aktuellen Seite
   if py5.key in "\r\n":
     if mode == "prim":
       calculate_number()
@@ -724,13 +890,12 @@ def key_pressed():
       calculate_pair()
     return
 
-  # 5. Leertaste (" ") deckt bei der Primfaktorzerlegung den nächsten Baumschritt auf
+  # 6. Leertaste (" ") deckt bei der Primfaktorzerlegung den nächsten Baumschritt auf
   if py5.key == " " and mode == "prim":
-    if number is not None and current_step < len(factor_steps):
-      current_step += 1
+    advance_prim_step()
     return
 
-  # 6. Ziffern 0 bis 9 an das aktuell aktive Eingabefeld anhängen (mit Längenbegrenzung)
+  # 7. Ziffern 0 bis 9 an das aktuell aktive Eingabefeld anhängen (mit Längenbegrenzung)
   if py5.key in "0123456789":
     if mode == "prim" and len(input_text) < 10:
       input_text += py5.key
