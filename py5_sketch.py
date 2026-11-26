@@ -278,7 +278,10 @@ def draw_ggt_kgv():
   py5.fill(255)
   py5.text_align(py5.LEFT, py5.CENTER)
   py5.text_size(22)
-  py5.text("ggT / kgV", 50, 50)
+  if mode == "ggt":
+    py5.text("Grösster gemeinsamer Teiler (ggT)", 50, 50)
+  else:
+    py5.text("Kleinstes gemeinsames Vielfaches (kgV)", 50, 50)
 
   py5.fill(35)
   py5.no_stroke()
@@ -296,10 +299,12 @@ def draw_ggt_kgv():
 
   if num_a is not None and num_b is not None:
     greatest = math.gcd(num_a, num_b)
-    least = abs(num_a * num_b) // greatest
     py5.text_size(28)
-    py5.text(f"ggT({num_a}, {num_b}) = {greatest}", 50, 280)
-    py5.text(f"kgV({num_a}, {num_b}) = {least}", 50, 330)
+    if mode == "ggt":
+      py5.text(f"ggT({num_a}, {num_b}) = {greatest}", 50, 280)
+    elif mode == "kgv":
+      least = abs(num_a * num_b) // greatest
+      py5.text(f"kgV({num_a}, {num_b}) = {least}", 50, 280)
 
 
 def mouse_pressed():
